@@ -328,6 +328,9 @@ ssh-copy-id jesse@192.168.64.202
 ssh-copy-id jesse@192.168.64.203
 ```
 
+> [!tip]
+> Use the Remote - SSH extension to setup a remote connection in VSCode from your computer to the control node. This will make it a lot easier to manage the manifest files!
+
 <br>
 
 ### Installing CNI Plugin (Calico)
