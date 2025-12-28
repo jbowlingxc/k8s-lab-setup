@@ -35,6 +35,14 @@ My lab consists of a Macbook, so I will be using UTM as my virtualization platfo
 | cp-node-02 | control | 192.168.64.202 | 2    | 2 GB   | 20 GB | Ubuntu 24.04.3 |
 | cp-node-03 | control | 192.168.64.203 | 2    | 2 GB   | 20 GB | Ubuntu 24.04.3 |
 
+### Network Information
+
+| Name     | Description | Network | Gateway |
+| -------- | ----------- | ------- | ------- |
+| Node     | The shared virtual network with my Mac (NATted to my home network). From the cluster's perspective, this is "external" | 192.168.64.0/24 | 192.168.64.1 |
+| Pod      | Non-routable network used for pod networking       | 10.255.0.0/16 | N/A |
+| Service  | Non-routable network used for services (ClusterIP) | 10.96.0.0/12 | N/A |
+
 ### OS Installation
 
 The following installation options were selected during the Ubuntu Server setup:
@@ -98,6 +106,29 @@ Apply the new configuration
 sudo netplan apply
 ```
 
+Enable IP forwarding so that kubeadm doesn't complain.
+
+```bash
+/etc/sysctl.conf
+
+# Uncomment line 28
+net.ipv4.ip_forward=1
+```
+
+Load the new settings
+
+```bash
+sudo sysctl -p
+```
+
+We will be using a shared name for the api-server configuration. This allows us to load balance the api-server across the control plane nodes and can eventually be load balanced. Update the hosts file to use the api server's name and point it to the local host.
+
+```bash
+/etc/hosts
+...
+127.0.0.1    kube-api
+```
+
 <br>
 
 > [!tip]
@@ -112,7 +143,7 @@ sudo netplan apply
 The default behavior of the kubelet is to fail if swap behavior occurs. So, we can disable swap on all nodes to prevent issues. Do this by modifying the `/etc/fstab' and commenting out the line for swap.
 
 ```bash
-sudo vim /etc/fstab
+/etc/fstab
 
 # /swap.img       none    swap    sw      0       0
 ```
@@ -151,6 +182,13 @@ These instructions helped with configuring the driver for containerd. Make sure 
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
     ...
     SystemdCgroup = true
+
+  # Set the version of the pause image. Kubeadm will warn of any version mismatches.
+  # line 67
+  [plugins."io.containerd.grpc.v1.cri"]
+    ...
+    sandbox_image = "registry.k8s.io/pause:3.10.1"
+
 ```
 
 Restart the containerd service
@@ -199,7 +237,113 @@ We are referencing the following document:<br>
 [Creating a cluster with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/)
 
 > [!warning]
-> This part is coming soon.
+> The following configuration is only done on the first control plane node (**cp-node-01**). Configuring the other nodes will be done later on.
+
+We will start by creating the cluster on the first node. Some notes on the installation document about this particular setup:
+- We are using the IP address configured on the control plane nodes. No additional IPs and no fancy network setups. This appears to be recommended against anyways.
+- We will use Calico for the CNI plugin.
+- Since we plan on deploying a multi-node control plane, we will specify the `--control-plane-endpoint` argument and specify a DNS name of `kube-api`. We will need to create a hosts file entry to ensure this name resolves to the local ip address.
+- We specify the IP range for the CNI plugin using `--pod-network-cidr`
+- Kubeadm should automatically detect that we are using containerd, but I put in the `--cri-socket` parameter anyway. This just tells it to use containerd.
+- I am using containerd version 1.7. When I run the command I get a warning message about needing to update the containerd version to one that suports RuntimeConfig in the future (version 2.0+ of containerd). It will be required in the next release of k8s. I am ignoring this for now.
+
+Here is the command and the arguments we will use the setup the cluster:
+
+```bash
+sudo kubeadm init --control-plane-endpoint kube-api --pod-network-cidr 10.255.0.0/16 --cri-socket unix:///var/run/containerd/containerd.sock
+```
+
+<br>
+
+> [!Tip]
+> If you run into any errors using `kubeadm init`, run the `kubeadm reset` command to revert, fix the issues, then try again.
+
+<br>
+
+When the command runs successfully, you will get output that describes how to join additional nodes. Keep this output as it will come in handy later!
+
+```bash
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+Alternatively, if you are the root user, you can run:
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+You can now join any number of control-plane nodes by copying certificate authorities
+and service account keys on each node and then running the following as root:
+
+  kubeadm join kube-api:6443 --token xmwmwu.qakochmw8co1bc88 \
+	--discovery-token-ca-cert-hash sha256:0b530721865f80641bf7fc24e8f63f409f7736c58b0d9352d67366e0b3249c59 \
+	--control-plane 
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join kube-api:6443 --token xmwmwu.qakochmw8co1bc88 \
+	--discovery-token-ca-cert-hash sha256:0b530721865f80641bf7fc24e8f63f409f7736c58b0d9352d67366e0b3249c59 
+```
+
+### Cluster access
+
+Let's verify the connectivity of our new cluster. We will be using the admin tools exclusively from **cp-node-01**, though you can certainly configure them on all 3 nodes if you'd like or even a separate jumpbox entirely.
+
+Setup the config file so that we can have the context for `kubectl` to access the cluster:
+
+```bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+Verify your access by running the following command and checking the health of the control plane pods:
+
+```bash
+kubectl get pods -A
+```
+
+> [!note]
+> The `coredns` pods will stay in a pending state until we install a CNI plugin. Everything else should be running.
+
+To make things a bit easier to work with, we will go ahead and generate an SSH key pair, configure VSCode with a remote SSH connection, and download this repo to the remote server for easy access to our manifests.
+
+Generate an SSH keypair on the **Mac**. Press enter to get through the prompts (no passphrase needed):
+
+```bash
+# By default, this saves the key ~/.ssh/id_ed25519
+ssh-keygen -t ed25519
+
+# Copy the key to the control plane servers
+# If ssh-copy-id isn't available, you can manually copy the public key information to the ~/.ssh/authorized_keys of the target servers
+ssh-copy-id jesse@192.168.64.201
+ssh-copy-id jesse@192.168.64.202
+ssh-copy-id jesse@192.168.64.203
+```
+
+<br>
+
+### Installing CNI Plugin (Calico)
+
+Before we can add new nodes to the mix, we need a CNI plugin to handle our pod routing.
+
+[Pod network configuration](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#pod-network)
+
+[Calico setup](https://docs.tigera.io/calico/latest/getting-started/kubernetes/self-managed-onprem/onpremises)
+
+We will use the recommended approach of installing the Tigera Operator and custom resource definitions. The yaml files were downloaded from the calico documentation provided in the link above.
+
+```bash
+kubectl create -f ./calico/operator-crds.yaml
+kubectl create -f ./calico/tigera-operator.yaml
+```
 
 ## Additional Tools
 These tools provide additional quality of life improvements and troubleshooting assistance.
