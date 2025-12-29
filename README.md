@@ -12,7 +12,7 @@ This home lab is designed for understanding the foundations of a k8s cluster usi
 
 This lab uses Kubeadm to setup a control plane and worker nodes. To best emulate practical implementations, a 3 node control plane will be configured using Ubuntu.
 
-My lab consists of a Macbook, so I will be using UTM as my virtualization platform and ARM based VMs.
+My lab consists of a MacBook, so I will be using UTM as my virtualization platform and ARM based VMs.
 
 >[!note]
 > You can find control plane specs for kubeadm here:<br>
@@ -54,7 +54,7 @@ The following installation options were selected during the Ubuntu Server setup:
 - Accept default partitioning layout
 - Profile configuration
   - Your name: `jesse`
-  - Your servers name: `cp-node-xx`
+  - Your server's name: `cp-node-xx`
   - Pick a username: `jesse`
   - Choose a password: `***********`
   - Confirm your password: `***********`
@@ -76,7 +76,7 @@ ip a
 # Get the default gateway
 ip route
 
-# Update the yaml file in /etc/netplan
+# Update the YAML file in /etc/netplan
 sudo vim /etc/netplan/50-cloud-init.yaml
 ```
 
@@ -121,7 +121,7 @@ Load the new settings
 sudo sysctl -p
 ```
 
-We will be using a shared name for the api-server configuration. This allows us to load balance the api-server across the control plane nodes and can eventually be load balanced. Update the hosts file to use the api server's name and point it to the local host.
+We will be using a shared name for the API server configuration. This allows us to load balance the API server across the control plane nodes and can eventually be load balanced. Update the hosts file to use the API server's name and point it to the local host.
 
 ```bash
 /etc/hosts
@@ -132,7 +132,7 @@ We will be using a shared name for the api-server configuration. This allows us 
 <br>
 
 > [!tip]
-> Once the initial setup was complete and I validated SSH, I powered off the VMs and removed the display adapter. Because of how UTM works on Mac, each VM genereates a window when it runs and closing the window causes the VM to pause. This was annoying, so I removed the display adapter.
+> Once the initial setup was complete and I validated SSH, I powered off the VMs and removed the display adapter. Because of how UTM works on Mac, each VM generates a window when it runs and closing the window causes the VM to pause. This was annoying, so I removed the display adapter.
 
 <br>
 
@@ -140,7 +140,7 @@ We will be using a shared name for the api-server configuration. This allows us 
 
 ### Disable Swap
 
-The default behavior of the kubelet is to fail if swap behavior occurs. So, we can disable swap on all nodes to prevent issues. Do this by modifying the `/etc/fstab' and commenting out the line for swap.
+The default behavior of the kubelet is to fail if swap behavior occurs. So, we can disable swap on all nodes to prevent issues. Do this by modifying the `/etc/fstab` and commenting out the line for swap.
 
 ```bash
 /etc/fstab
@@ -247,7 +247,7 @@ We will start by creating the cluster on the first node. Some notes on the insta
 - Kubeadm should automatically detect that we are using containerd, but I put in the `--cri-socket` parameter anyway. This just tells it to use containerd.
 - I am using containerd version 1.7. When I run the command I get a warning message about needing to update the containerd version to one that suports RuntimeConfig in the future (version 2.0+ of containerd). It will be required in the next release of k8s. I am ignoring this for now.
 
-Here is the command and the arguments we will use the setup the cluster:
+Here is the command and the arguments we will use to set up the cluster:
 
 ```bash
 sudo kubeadm init --control-plane-endpoint kube-api --pod-network-cidr 10.255.0.0/16 --cri-socket unix:///var/run/containerd/containerd.sock
