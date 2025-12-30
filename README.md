@@ -14,12 +14,15 @@ This lab uses Kubeadm to setup a control plane and worker nodes. To best emulate
 
 My lab consists of a MacBook, so I will be using UTM as my virtualization platform and ARM based VMs.
 
->[!note]
+> [!note]
 > You can find control plane specs for kubeadm here:<br>
 > [Creating a cluster with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/)
 
->[!warning]
+> [!warning]
 > All VMs created here are not bridged to any real networks-- they are all internal VM-only networks. These VMs are running directly on my Macbook and are not routable from the rest of my network, but they can reach out to the internet to download resources as needed. This is intentional. Any testing of the network can only be done from my laptop.
+
+> [!error]
+> My original configuration had 2 GB of RAM per control node. This worked until I installed Calico which ran into OOM isues, so I increased it.
 
 ## Control Plane Nodes
 
@@ -31,9 +34,9 @@ My lab consists of a MacBook, so I will be using UTM as my virtualization platfo
 
 | Node       | Role    | IP Address     | CPUs | Memory | Disk  | OS             |
 | ---------- | ------- | -------------- | ---- | ------ | ----- | -------------- |
-| cp-node-01 | control | 192.168.64.201 | 2    | 2 GB   | 20 GB | Ubuntu 24.04.3 |
-| cp-node-02 | control | 192.168.64.202 | 2    | 2 GB   | 20 GB | Ubuntu 24.04.3 |
-| cp-node-03 | control | 192.168.64.203 | 2    | 2 GB   | 20 GB | Ubuntu 24.04.3 |
+| cp-node-01 | control | 192.168.64.201 | 2    | 4 GB   | 20 GB | Ubuntu 24.04.3 |
+| cp-node-02 | control | 192.168.64.202 | 2    | 4 GB   | 20 GB | Ubuntu 24.04.3 |
+| cp-node-03 | control | 192.168.64.203 | 2    | 4 GB   | 20 GB | Ubuntu 24.04.3 |
 
 ### Network Information
 
@@ -310,6 +313,21 @@ Verify your access by running the following command and checking the health of t
 kubectl get pods -A
 ```
 
+Setting up some aliases to make things easier
+
+```bash
+alias k='kubectl'
+alias kg='k get'
+alias kgn='k get nodes'
+alias kgp='k get pods'
+alias kgs='k get services'
+alias kgd='k get deployments'
+alias kgpa='k get pods --all-namespaces'
+alias kds='k describe service'
+alias kdp='k describe pod'
+alias klogs='k logs -f'
+```
+
 > [!note]
 > The `coredns` pods will stay in a pending state until we install a CNI plugin. Everything else should be running.
 
@@ -347,6 +365,64 @@ We will use the recommended approach of installing the Tigera Operator and custo
 kubectl create -f ./calico/operator-crds.yaml
 kubectl create -f ./calico/tigera-operator.yaml
 ```
+
+We have the option to use either eBPF or the traditional iptables dataplane. eBPF is the newer version of the dataplane and has better performance. So, we will be using eBPF.
+[Why move from iptables to eBPF](https://isovalent.com/blog/post/why-replace-iptables-with-ebpf/)
+
+> [!warning]
+> This resource file has been updated to use the pod network ranges specified in this document. (10.255.0.0/16 and a blocksize of /24 per node).
+
+<br>
+
+```bash
+kubectl create -f ./calico/custom-resources-bpf.yaml
+
+# Monitor the deployment. This might take a few minutes.
+watch kubectl get tigerastatus
+
+# During this, the api server may become unavailble and lead to connection issues.
+```
+
+<br>
+
+> [!caution]
+> It turned out that the `calico-apiserver` was crashing from OOM (`kubectl get pod -A`). I ended up increasing the memory of the node to 4 GB.
+
+<br>
+
+### Install K9s and MetricServer
+
+Let's make life a little easier with useful metrics.
+
+```bash
+kubectl apply -f ./metrics-server/components.yaml
+```
+
+And now K9s for easy management. It's available through snap.
+
+```bash
+sudo snap install k9s --channel=latest/stable
+
+# A symlink is needed to run it
+sudo ln -s /snap/k9s/current/bin/k9s /snap/bin/k9s
+```
+<br>
+
+> [!caution]
+> The k9s snap didn't work. Looking into it...
+
+
+## TODO
+- Metrics server!
+- Prometheus
+- Static CoreDNS entries (for things like NFS server)
+- Istio
+- NFS Server
+- Worker node
+- Image registry
+- Secret storage
+- Encrypt etcd
+- Velero backups
 
 ## Additional Tools
 These tools provide additional quality of life improvements and troubleshooting assistance.
