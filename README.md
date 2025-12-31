@@ -15,14 +15,14 @@ This lab uses Kubeadm to setup a control plane and worker nodes. To best emulate
 My lab consists of a MacBook, so I will be using UTM as my virtualization platform and ARM based VMs.
 
 > [!note]
-> You can find control plane specs for kubeadm here:<br>
+> You can find *some* control plane specs for kubeadm here:<br>
 > [Creating a cluster with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/)
 
 > [!warning]
 > All VMs created here are not bridged to any real networks-- they are all internal VM-only networks. These VMs are running directly on my Macbook and are not routable from the rest of my network, but they can reach out to the internet to download resources as needed. This is intentional. Any testing of the network can only be done from my laptop.
 
-> [!error]
-> My original configuration had 2 GB of RAM per control node. This worked until I installed Calico which ran into OOM isues, so I increased it.
+> [!caution]
+> My original configuration had 2 GB of RAM per control node. This worked until I installed Calico which ran into OOM isues, so I increased it. I also under-provisioned the storage and ran in to issues with disk pressure, causing the operator for the CNI plugin to endlessly get evicted and generating a ton of garbage.
 
 ## Control Plane Nodes
 
@@ -34,9 +34,28 @@ My lab consists of a MacBook, so I will be using UTM as my virtualization platfo
 
 | Node       | Role    | IP Address     | CPUs | Memory | Disk  | OS             |
 | ---------- | ------- | -------------- | ---- | ------ | ----- | -------------- |
-| cp-node-01 | control | 192.168.64.201 | 2    | 4 GB   | 20 GB | Ubuntu 24.04.3 |
-| cp-node-02 | control | 192.168.64.202 | 2    | 4 GB   | 20 GB | Ubuntu 24.04.3 |
-| cp-node-03 | control | 192.168.64.203 | 2    | 4 GB   | 20 GB | Ubuntu 24.04.3 |
+| cp-node-01 | control | 192.168.64.201 | 2    | 4 GB   | 50 GB | Ubuntu 24.04.3 |
+| cp-node-02 | control | 192.168.64.202 | 2    | 4 GB   | 50 GB | Ubuntu 24.04.3 |
+| cp-node-03 | control | 192.168.64.203 | 2    | 4 GB   | 50 GB | Ubuntu 24.04.3 |
+
+> [!tip]
+> I started with 20 GB drives and ran low on space, so I had to expand them. After doing updating the VM, I ran these commands to expand the partitions:
+> https://askubuntu.com/questions/1406697/extend-lvm-size
+> ```bash
+> # Check out the disks
+> lsblck
+> 
+> # Expand the partition
+> sudo growpart /dev/vda 3
+> 
+> # Expand the logical volume
+> sudo lvextend -l+100%FREE /dev/ubuntu-vg/ubuntu-lv
+>
+> # Expand the file system
+> sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+> ```
+
+<br>
 
 ### Network Information
 
@@ -313,19 +332,19 @@ Verify your access by running the following command and checking the health of t
 kubectl get pods -A
 ```
 
-Setting up some aliases to make things easier
+Setting up some aliases to make things easier. This will append the commands to your bash profile so that they are automatically applied at login.
 
 ```bash
-alias k='kubectl'
-alias kg='k get'
-alias kgn='k get nodes'
-alias kgp='k get pods'
-alias kgs='k get services'
-alias kgd='k get deployments'
-alias kgpa='k get pods --all-namespaces'
-alias kds='k describe service'
-alias kdp='k describe pod'
-alias klogs='k logs -f'
+alias k='kubectl' >> ~/.profile
+alias kg='k get' >> ~/.profile
+alias kgn='k get nodes' >> ~/.profile
+alias kgp='k get pods' >> ~/.profile
+alias kgs='k get services' >> ~/.profile
+alias kgd='k get deployments' >> ~/.profile
+alias kgpa='k get pods --all-namespaces' >> ~/.profile
+alias kds='k describe service' >> ~/.profile
+alias kdp='k describe pod' >> ~/.profile
+alias klogs='k logs -f' >> ~/.profile
 ```
 
 > [!note]
@@ -392,25 +411,25 @@ watch kubectl get tigerastatus
 
 ### Install K9s and MetricServer
 
-Let's make life a little easier with useful metrics.
+Let's make life a little easier with useful metrics. I added a toleration to the container so that it would run on the control plane nodes.
 
 ```bash
 kubectl apply -f ./metrics-server/components.yaml
 ```
 
-And now K9s for easy management. It's available through snap.
+> [!caution]
+> Metrics server is crashing due to x509 error. Might need cert manager set up first?
+
+And now K9s for easy management. It's available through snap, but I ran into some problems (even after creating a symlink). Downloading from github is just as easy though.
 
 ```bash
-sudo snap install k9s --channel=latest/stable
+# Download the package
+wget -O ~/ 'https://github.com/derailed/k9s/releases/download/v0.50.16/k9s_linux_arm64.deb'
 
-# A symlink is needed to run it
-sudo ln -s /snap/k9s/current/bin/k9s /snap/bin/k9s
+# Install the package
+sudo dpkg -i ~/k9s.deb
 ```
 <br>
-
-> [!caution]
-> The k9s snap didn't work. Looking into it...
-
 
 ## TODO
 - Metrics server!
@@ -424,8 +443,17 @@ sudo ln -s /snap/k9s/current/bin/k9s /snap/bin/k9s
 - Encrypt etcd
 - Velero backups
 
+### Useful Troubleshooting Commands
+
+```bash
+# Delete evicted/completed/errored pods
+kubectl get pods -A | awk '$4 ~ /Evicted|Error/{print $1, $2}' | xargs -n 2 kubectl delete pod -n
+```
+
 ## Additional Tools
 These tools provide additional quality of life improvements and troubleshooting assistance.
+
+node-role.kubernetes.io/control-plane:NoSchedule
 
 - podman
 - crictl
