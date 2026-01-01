@@ -138,6 +138,8 @@ spec:
         - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
         - --kubelet-use-node-status-port
         - --metric-resolution=15s
+        # Added argument to specify custom CA certificate
+        - --kubelet-certificate-authority=/etc/pki/kubeadm-ca/ca.crt # Point to the mounted CA file
         image: registry.k8s.io/metrics-server/metrics-server:v0.8.0
         imagePullPolicy: IfNotPresent
         livenessProbe:
@@ -177,18 +179,26 @@ spec:
         volumeMounts:
         - mountPath: /tmp
           name: tmp-dir
+        # Added volume mount for custom CA certificates
+        - name: kubeadm-ca-volume
+          mountPath: /etc/pki/kubeadm-ca # Choose a suitable mount path
+          readOnly: true
       nodeSelector:
         kubernetes.io/os: linux
       # Added tolerations for control plane nodes
       tolerations:
       - key: "node-role.kubernetes.io/control-plane"
         operator: "Exists"
-        effect: "NoSchedule"        
+        effect: "NoSchedule"       
       priorityClassName: system-cluster-critical
       serviceAccountName: metrics-server
       volumes:
       - emptyDir: {}
         name: tmp-dir
+      # Added volume for custom CA certificates
+      - name: kubeadm-ca-volume
+        secret:
+          secretName: metrics-server-ca
 ---
 apiVersion: apiregistration.k8s.io/v1
 kind: APIService
