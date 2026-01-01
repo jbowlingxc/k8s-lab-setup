@@ -335,16 +335,18 @@ kubectl get pods -A
 Setting up some aliases to make things easier. This will append the commands to your bash profile so that they are automatically applied at login.
 
 ```bash
-alias k='kubectl' >> ~/.profile
-alias kg='k get' >> ~/.profile
-alias kgn='k get nodes' >> ~/.profile
-alias kgp='k get pods' >> ~/.profile
-alias kgs='k get services' >> ~/.profile
-alias kgd='k get deployments' >> ~/.profile
-alias kgpa='k get pods --all-namespaces' >> ~/.profile
-alias kds='k describe service' >> ~/.profile
-alias kdp='k describe pod' >> ~/.profile
-alias klogs='k logs -f' >> ~/.profile
+# Add to ~/.profile
+alias k='kubectl'
+alias kg='k get'
+alias kgn='k get nodes'
+alias kgp='k get pods'
+alias kgs='k get services'
+alias kgd='k get deployments'
+alias kgpa='k get pods --all-namespaces'
+alias kds='k describe service'
+alias kdp='k describe pod'
+alias klogs='k logs -f'
+alias kns='k config set-context --current -n'
 ```
 
 > [!note]
@@ -409,45 +411,127 @@ watch kubectl get tigerastatus
 
 <br>
 
-### Install K9s and MetricServer
 
-Let's make life a little easier with useful metrics. I added a toleration to the container so that it would run on the control plane nodes.
-
-```bash
-kubectl apply -f ./metrics-server/components.yaml
-```
-
-> [!caution]
-> Metrics server is crashing due to x509 error. Might need cert manager set up first?
+### Installing K9s
 
 And now K9s for easy management. It's available through snap, but I ran into some problems (even after creating a symlink). Downloading from github is just as easy though.
 
 ```bash
 # Download the package
-wget -O ~/ 'https://github.com/derailed/k9s/releases/download/v0.50.16/k9s_linux_arm64.deb'
+wget -O ~/k9s.deb 'https://github.com/derailed/k9s/releases/download/v0.50.16/k9s_linux_arm64.deb'
 
 # Install the package
 sudo dpkg -i ~/k9s.deb
 ```
+
 <br>
 
+### Cert Manager
+
+After setting up Metrics server, the pod was failing its health checks and unable to start due to a certificate error in the logs. It sounds like we need cert manager. 
+
+[Installing cert-manager](https://cert-manager.io/docs/installation/kubectl/)
+
+I downloaded the massive YAML file (13k lines?!). It contains all the CRDs and the following components:
+- cert-manager
+- cert-manager-cainjector
+- cert-manager-webhook
+
+I also added a toleration for all 3 container specs to allow them to run on the control plane nodes.
+
+```bash
+kubectl apply -f ./cert-manager/cert-manager.yaml
+```
+
+It's also useful to install the command utility for interacting with cert-manager.
+
+```bash
+# Download the package
+wget -O ~/cmctl.tar.gz 'https://github.com/cert-manager/cmctl/releases/download/v2.4.0/cmctl_linux_arm64.tar.gz'
+
+# Extract the files. This will extract to the current directory. You can delete the 
+tar -xvf ~/cmctl.tar.gz
+rm LICENSE
+rm README.md
+sudo mv cmctl /usr/local/bin/
+```
+
+<br>
+
+### Installing Metrics Server
+
+Let's make life a little easier with useful metrics.
+
+> [!caution]
+> Event with cert-manager, the metrics-server doesn't trust the certs from the kubelet. This is because kubeadm uses its own CA to hand out certs to kubelets. Therefore we need to find that CA configuration and give it to the metrics-server to trust.
+
+The kubelet configuration file is at `/etc/kubernetes/kubelet.config`. The value `certificate-authority-data` matches the base64 encoded value of the `/etc/kubeneretes/pki/ca.crt` file, so we can be sure that this is the file the kubelets are using.
+
+```bash
+# This will take the ca file that kubeadm used for the kubelets and turn it into a secret
+kubectl create secret generic metrics-server-ca --namespace=kube-system --from-file=ca.crt=/etc/kubernetes/pki/ca.crt
+# 
+```
+
+We also need to make sure that IPs are included in the SAN entries for the kubelets since the metrics server connects via IP. We can enable this by first updating the config map for the kubelet-config:
+
+```bash
+# Append "serverTLSBootstrap: true" to the end of the "kublet:" section and save.
+kubectl -n kube-system edit configmap kubelet-config
+```
+
+Also add it to the config for each kubelet in `/var/lib/kubelet/config.yaml`.
+
+```bash
+sudo su
+echo "serverTLSBootstrap: true" >> /var/lib/kubelet/config.yaml
+exit
+
+# Restart the kubelet to force the configuration to be read and certs to renew
+sudo systemctl restart kubelet
+
+# After restart, check for csrs and approve them
+kubectl get csr
+kubectl certificate approve approve <csr name>
+```
+
+The metrics server manifest already has the secret referenced, so we just need to apply it now. Just like the cert-manager containers, I also added a toleration for the control plane nodes.
+
+```bash
+kubectl apply -f ./metrics-server/components.yaml
+```
+
+Now we should finally be able to see metrics!
+
+<br>
+
+### Intall additional nodes
+
+Onboard more control plane nodes.
+
+<br>
+
+### Install NFS Server
+
+To support PVCs, we will setup an NFSv4 server. This 
+
 ## TODO
-- Metrics server!
-- Prometheus
-- Static CoreDNS entries (for things like NFS server)
-- Istio
-- NFS Server
-- Worker node
-- Image registry
-- Secret storage
-- Encrypt etcd
+- NFS4 Server
 - Velero backups
+- Encrypt etcd
+- Static CoreDNS entries (for things like NFS server)
+- Worker nodes
+- Istio
+- Prometheus
+- Secret storage (OpenBao)
+- Image registry (Harbor)
+- ArgoCD
 
 ### Useful Troubleshooting Commands
 
 ```bash
 # Delete evicted/completed/errored pods
-kubectl get pods -A | awk '$4 ~ /Evicted|Error/{print $1, $2}' | xargs -n 2 kubectl delete pod -n
+kubectl get pods -A | awk '$4 ~ /Evicted|Error|Completed|ContainerStatusUnknown/{print $1, $2}' | xargs -n 2 kubectl delete pod -n
 ```
 
 ## Additional Tools
